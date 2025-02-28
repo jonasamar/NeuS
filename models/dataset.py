@@ -38,7 +38,9 @@ class Dataset:
     def __init__(self, conf):
         super(Dataset, self).__init__()
         print('Load data: Begin')
-        self.device = torch.device('cuda')
+        #self.device = torch.device('cuda')
+        self.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+
         self.conf = conf
 
         self.data_dir = conf.get_string('data_dir')
@@ -122,7 +124,11 @@ class Dataset:
         rays_v = p / torch.linalg.norm(p, ord=2, dim=-1, keepdim=True)    # batch_size, 3
         rays_v = torch.matmul(self.pose_all[img_idx, None, :3, :3], rays_v[:, :, None]).squeeze()  # batch_size, 3
         rays_o = self.pose_all[img_idx, None, :3, 3].expand(rays_v.shape) # batch_size, 3
-        return torch.cat([rays_o.cpu(), rays_v.cpu(), color, mask[:, :1]], dim=-1).cuda()    # batch_size, 10
+        
+        if torch.cuda.is_available():
+            return torch.cat([rays_o.cpu(), rays_v.cpu(), color, mask[:, :1]], dim=-1).cuda()    # batch_size, 10
+        else:
+            return torch.cat([rays_o, rays_v, color, mask[:, :1]], dim=-1).cpu()
 
     def gen_rays_between(self, idx_0, idx_1, ratio, resolution_level=1):
         """
