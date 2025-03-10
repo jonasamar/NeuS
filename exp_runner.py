@@ -15,6 +15,7 @@ from pyhocon import ConfigFactory
 from models.dataset import Dataset
 from models.fields import RenderingNetwork, SDFNetwork, SingleVarianceNetwork, NeRF
 from models.renderer import NeuSRenderer
+import sys
 
 
 class Runner:
@@ -373,28 +374,29 @@ if __name__ == '__main__':
 
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     print(f"Running on : {device}")
-    
-    if torch.cuda.is_available():
-        torch.set_default_tensor_type('torch.cuda.FloatTensor')
-    else:
-        torch.set_default_tensor_type('torch.FloatTensor')
 
     FORMAT = "[%(filename)s:%(lineno)s - %(funcName)20s() ] %(message)s"
     logging.basicConfig(level=logging.DEBUG, format=FORMAT)
 
+    # Filter out Jupyter-specific arguments
+    sys.argv = [arg for arg in sys.argv if not arg.startswith('--f=')]
+
     parser = argparse.ArgumentParser()
-    parser.add_argument('--conf', type=str, default='./confs/base.conf')
+    parser.add_argument('--conf', type=str, default='./confs/project_DTU.conf')
     parser.add_argument('--mode', type=str, default='train')
     parser.add_argument('--mcube_threshold', type=float, default=0.0)
     parser.add_argument('--is_continue', default=False, action="store_true")
     parser.add_argument('--gpu', type=int, default=0)
-    parser.add_argument('--case', type=str, default='')
+    parser.add_argument('--case', type=str, default='scan24')
 
     args = parser.parse_args()
 
-    if torch.cuda.is_available(): 
-        torch.cuda.set_device(args.gpu)
-    
+    # Set default data type
+    torch.set_default_dtype(torch.float32)
+
+    # Set default device
+    torch.set_default_device('cuda')
+
     runner = Runner(args.conf, args.mode, args.case, args.is_continue)
 
     if args.mode == 'train':
