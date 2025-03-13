@@ -22,6 +22,10 @@ class Runner:
         # self.device = torch.device('cuda')
         self.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
+        if self.device =="cuda":
+            if torch.cuda.device_count() > 1:
+                print(f"Using {torch.cuda.device_count()} GPUs")
+        
         # Configuration
         self.conf_path = conf_path
         f = open(self.conf_path)
@@ -95,6 +99,13 @@ class Runner:
         # Backup codes and configs for debug
         if self.mode[:5] == 'train':
             self.file_backup()
+            
+        if self.device == "cuda":
+            if torch.cuda.device_count() > 1:
+                self.nerf_outside = torch.nn.DataParallel(self.nerf_outside)
+                self.sdf_network = torch.nn.DataParallel(self.sdf_network)
+                self.deviation_network = torch.nn.DataParallel(self.deviation_network)
+                self.color_network = torch.nn.DataParallel(self.color_network)
 
     def train(self):
         self.writer = SummaryWriter(log_dir=os.path.join(self.base_exp_dir, 'logs'))
@@ -105,7 +116,12 @@ class Runner:
         for iter_i in tqdm(range(res_step)):
             data = self.dataset.gen_random_rays_at(image_perm[self.iter_step % len(image_perm)], self.batch_size)
 
-            rays_o, rays_d, true_rgb, mask = data[:, :3], data[:, 3: 6], data[:, 6: 9], data[:, 9: 10]
+            # rays_o, rays_d, true_rgb, mask = data[:, :3], data[:, 3: 6], data[:, 6: 9], data[:, 9: 10]
+            rays_o, rays_d, true_rgb, mask = data[:, :3].to(self.device), \
+                                 data[:, 3:6].to(self.device), \
+                                 data[:, 6:9].to(self.device), \
+                                 data[:, 9:10].to(self.device)
+
             near, far = self.dataset.near_far_from_sphere(rays_o, rays_d)
 
             background_rgb = None
@@ -392,7 +408,7 @@ if __name__ == '__main__':
 
     args = parser.parse_args()
 
-    if torch.cuda.is_available(): 
+    if torch.cuda.is_available() and torch.cuda.device_count()==1: 
         torch.cuda.set_device(args.gpu)
     
     runner = Runner(args.conf, args.mode, args.case, args.is_continue)
