@@ -392,6 +392,7 @@ if __name__ == '__main__':
     
     if torch.cuda.is_available():
         torch.set_default_tensor_type('torch.cuda.FloatTensor')
+        print(f"Using {torch.cuda.device_count()} GPUs")
     else:
         torch.set_default_tensor_type('torch.FloatTensor')
 
@@ -408,7 +409,8 @@ if __name__ == '__main__':
 
     args = parser.parse_args()
 
-    if torch.cuda.is_available() and torch.cuda.device_count()==1: 
+    if torch.cuda.is_available() and torch.cuda.device_count()==1:
+        print(f"Using GPU {args.gpu}")
         torch.cuda.set_device(args.gpu)
     
     runner = Runner(args.conf, args.mode, args.case, args.is_continue)
