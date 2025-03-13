@@ -4,7 +4,7 @@ pyhocon==0.3.57
 icecream==2.1.0
 opencv_python==4.5.2.52
 tqdm==4.50.2
-torch==1.8.0+cu111
+torch==1.8.0+cu111 -f https://download.pytorch.org/whl/torch_stable.html
 scipy==1.7.0
 PyMCubes==0.1.2
 tensorboard
