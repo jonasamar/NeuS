@@ -1,5 +1,6 @@
 import os
 import time
+import json
 import logging
 import argparse
 import numpy as np
@@ -38,6 +39,24 @@ class Runner:
         self.base_exp_dir = self.conf['general.base_exp_dir']
         os.makedirs(self.base_exp_dir, exist_ok=True)
         self.dataset = Dataset(self.conf['dataset'])
+        
+        def serialize(obj, possible_keys=['data_dir', 
+                                          'render_cameras_name',
+                                          'object_cameras_name',
+                                          'n_images',
+                                          'image_indices']):
+            if isinstance(obj, torch.Tensor):
+                return obj.tolist()  # Convert PyTorch tensor to a list
+            if isinstance(obj, list):
+                return [serialize(item) for item in obj]  # Recursively serialize lists
+            if hasattr(obj, '__dict__'):
+                return {key: serialize(value) for key, value in obj.__dict__.items() if key in possible_keys}  # Convert objects recursively
+            return obj  # Keep other data as is
+        dataset_path = os.path.join(self.base_exp_dir, "dataset_info.json")
+        dataset_serializable = serialize(self.dataset)
+        with open(dataset_path, "w") as json_file:
+            json.dump(dataset_serializable, json_file, indent=4)
+            
         self.iter_step = 0
 
         # Training parameters
