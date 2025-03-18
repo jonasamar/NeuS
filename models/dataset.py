@@ -90,8 +90,16 @@ class Dataset:
         self.object_bbox_min = object_bbox_min[:3, 0]
         self.object_bbox_max = object_bbox_max[:3, 0]
 
+        subsample = float(conf.get_string('subsample', '1.'))
+        if subsample:
+            self.n_images = int(self.n_images*subsample)
+            self.image_indices = torch.randperm(self.images.size(0))[:self.n_images]
+            self.images = self.images[self.image_indices]
+            self.masks = self.masks[self.image_indices]
+            self.intrinsics_all_inv = self.intrinsics_all_inv[self.image_indices]
+            self.pose_all = self.pose_all[self.image_indices]
         print('Load data: End')
-
+        
     def gen_rays_at(self, img_idx, resolution_level=1):
         l = resolution_level
         tx = torch.linspace(0, self.W - 1, self.W // l, device=self.device)
