@@ -135,7 +135,6 @@ class Runner:
         for iter_i in tqdm(range(res_step)):
             data = self.dataset.gen_random_rays_at(image_perm[self.iter_step % len(image_perm)], self.batch_size)
 
-            # rays_o, rays_d, true_rgb, mask = data[:, :3], data[:, 3: 6], data[:, 6: 9], data[:, 9: 10]
             rays_o, rays_d, true_rgb, mask = data[:, :3].to(self.device), \
                                  data[:, 3:6].to(self.device), \
                                  data[:, 6:9].to(self.device), \

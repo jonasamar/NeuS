@@ -5,6 +5,7 @@ import numpy as np
 from models.embedder import get_embedder
 
 
+# This implementation is borrowed from IDR: https://github.com/lioryariv/idr
 class SDFNetwork(nn.Module):
     def __init__(self,
                  d_in,
@@ -141,7 +142,7 @@ class RenderingNetwork(nn.Module):
 
             setattr(self, "lin" + str(l), lin)
 
-        self.sin = torch.sin
+        self.relu = nn.ReLU()
 
     def forward(self, points, normals, view_dirs, feature_vectors):
         if self.embedview_fn is not None:
@@ -164,7 +165,7 @@ class RenderingNetwork(nn.Module):
             x = lin(x)
 
             if l < self.num_layers - 2:
-                x = self.sin(x)
+                x = self.relu(x)
 
         if self.squeeze_out:
             x = torch.sigmoid(x)
@@ -234,7 +235,7 @@ class NeRF(nn.Module):
         h = input_pts
         for i, l in enumerate(self.pts_linears):
             h = self.pts_linears[i](h)
-            h = torch.sin(h)
+            h = F.relu(h)
             if i in self.skips:
                 h = torch.cat([input_pts, h], -1)
 
@@ -245,7 +246,7 @@ class NeRF(nn.Module):
 
             for i, l in enumerate(self.views_linears):
                 h = self.views_linears[i](h)
-                h = torch.sin(h)
+                h = F.relu(h)
 
             rgb = self.rgb_linear(h)
             return alpha, rgb
