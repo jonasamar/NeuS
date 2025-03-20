@@ -34,6 +34,7 @@ def load_K_Rt_from_P(filename, P=None):
     return intrinsics, pose
 
 
+
 class Dataset:
     def __init__(self, conf):
         super(Dataset, self).__init__()
@@ -124,6 +125,25 @@ class Dataset:
         rays_o = self.pose_all[img_idx, None, :3, 3].expand(rays_v.shape)
 
         return torch.cat([rays_o, rays_v, color, mask[:, :1]], dim=-1)
+    
+    ### Function to generate guided rays, adding a probability map to the random pixel selection. An extra uniform transformation s.t. all pixels in a grid cell get an equal chance to be selected.
+    def gen_guided_rays_at(self, img_idx, prob_map, batch_size, Rx, Ry):
+        deltaX, deltaY = self.W // Rx, self.H // Ry
+        pixels = torch.multinomial(prob_map.view(-1), batch_size, replacement=True)
+        pixels_x_var = torch.randint(low=-deltaX // 2, high=deltaX // 2, size=[batch_size], device=self.device)
+        pixels_y_var = torch.randint(low=-deltaY // 2, high=deltaY // 2, size=[batch_size], device=self.device)
+        pixels_x = pixels % self.W + pixels_x_var
+        pixels_y = pixels // self.W + pixels_y_var
+        color = self.images[img_idx][(pixels_y, pixels_x)]
+        mask = self.masks[img_idx][(pixels_y, pixels_x)]
+        p = torch.stack([pixels_x, pixels_y, torch.ones_like(pixels_y)], dim=-1).float()
+        p = torch.matmul(self.intrinsics_all_inv[img_idx, None, :3, :3], p[:, :, None]).squeeze()
+        rays_v = p / torch.linalg.norm(p, ord=2, dim=-1, keepdim=True)
+        rays_v = torch.matmul(self.pose_all[img_idx, None, :3, :3], rays_v[:, :, None]).squeeze()
+        rays_o = self.pose_all[img_idx, None, :3, 3].expand(rays_v.shape)
+
+        return torch.cat([rays_o, rays_v, color, mask[:, :1]], dim=-1)
+    
     def gen_rays_between(self, idx_0, idx_1, ratio, resolution_level=1):
         l = resolution_level
         tx = torch.linspace(0, self.W - 1, self.W // l, device=self.device)
@@ -165,4 +185,9 @@ class Dataset:
     def image_at(self, idx, resolution_level):
         img = cv.imread(self.images_lis[idx])
         return (cv.resize(img, (self.W // resolution_level, self.H // resolution_level))).clip(0, 255)
-
+    
+    def get_world_scale_maps(self):
+        return self.world_mats_np, self.scale_mats_np
+    
+    def get_image_size(self):
+        return self.H, self.W
