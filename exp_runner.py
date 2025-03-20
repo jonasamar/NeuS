@@ -96,6 +96,19 @@ class Runner:
         # Backup codes and configs for debug
         if self.mode[:5] == 'train':
             self.file_backup()
+            
+        # Maps parameters   
+        self.guided_sampling = self.conf.get_bool('sampling.guided_sampling', default=False)
+        self.val_ps_freq = self.conf.get_int('sampling.val_ps_freq', default=5000)
+        if self.guided_sampling:
+            self.Rx = self.conf.get_int('sampling.resX', default=32)
+            self.Ry = self.conf.get_int('sampling.resY', default=32)
+            self.Rz = self.conf.get_int('sampling.resZ', default=32)
+            self.F = self.conf.get_int('sampling.factF', default=2)
+            
+            self.world_mats, self.scale_mats = self.dataset.get_world_scale_maps()
+            self.H, self.W = self.dataset.get_image_size()
+            self.maps = self.compute_maps()
 
     def train(self):
         self.writer = SummaryWriter(log_dir=os.path.join(self.base_exp_dir, 'logs'))
@@ -104,8 +117,14 @@ class Runner:
         image_perm = self.get_image_perm()
 
         for iter_i in tqdm(range(res_step)):
-            data = self.dataset.gen_random_rays_at(image_perm[self.iter_step % len(image_perm)], self.batch_size)
-
+            if self.guided_sampling:
+                data1 = self.dataset.gen_random_rays_at(image_perm[self.iter_step % len(image_perm)], self.batch_size // 2)
+                data2 = self.dataset.gen_guided_rays_at(image_perm[(self.iter_step + 1) % len(image_perm)], self.maps[image_perm[(self.iter_step + 1) % len(image_perm)]], self.batch_size // 2, self.Rx, self.Ry)
+                data = torch.concatenate([data1, data2], axis=0)
+            
+            else:
+                data = self.dataset.gen_random_rays_at(image_perm[self.iter_step % len(image_perm)], self.batch_size)
+            
             rays_o, rays_d, true_rgb, mask = data[:, :3], data[:, 3: 6], data[:, 6: 9], data[:, 9: 10]
             near, far = self.dataset.near_far_from_sphere(rays_o, rays_d)
 
@@ -169,6 +188,9 @@ class Runner:
 
             if self.iter_step % self.val_mesh_freq == 0:
                 self.validate_mesh()
+            
+            if self.guided_sampling & (self.iter_step % self.val_ps_freq == 0):
+                self.maps = self.compute_maps()
 
             self.update_learning_rate()
 
@@ -367,6 +389,94 @@ class Runner:
             writer.write(image)
 
         writer.release()
+    
+    ### Added a function to compute the guided sampling maps (see notebook/report for more information)
+    def compute_map(self, world_mat, scale_mat, W, H, s=1):
+
+        # Define geometric transformation
+        def h(x, P) :
+            x = torch.concat([x, torch.ones((x.shape[0], 1))], axis=1)
+            return P @ x.T
+
+        def g(x_hat) :
+            x_hat [:2, :] = x_hat[:2, :] / x_hat[2, :]
+            return x_hat
+
+        def f(x, P) :
+            return g(h(x, P))
+        
+        # Define logistic function
+        def Phi(o, s) :
+            return s * torch.exp(-s * o) / (1 + torch.exp(-s * o))
+        
+        # Define projection matrix P
+        P = torch.Tensor(world_mat @ scale_mat)[:3, :4].to(self.device)
+
+        limX = 1 # Object are more or less in the unit sphere, check the IDR github page https://github.com/lioryariv/idr/blob/main/DATA_CONVENTION.md
+        
+        # Compute the grid of points in the world system
+        grid_Xx = torch.linspace(-limX, limX, self.Rx * self.F)
+        grid_Xy = torch.linspace(-limX, limX, self.Ry * self.F)
+        grid_Xz = torch.linspace(-limX, limX, self.Rz * self.F)
+
+        grid_Xx, grid_Xy, grid_Xz = torch.meshgrid(grid_Xx, grid_Xy, grid_Xz, indexing='xy')
+        grid_Xx = grid_Xx.reshape(-1, 1)
+        grid_Xy = grid_Xy.reshape(-1, 1)
+        grid_Xz = grid_Xz.reshape(-1, 1)
+
+        # Compute the grid of points in the camera system
+        grid_Ux = torch.linspace(0, W, self.Rx)
+        grid_Uy = torch.linspace(0, H, self.Ry)
+
+        distancex = 0.5 * (grid_Ux[1] - grid_Ux[0])
+        distancey = 0.5 * (grid_Uy[1] - grid_Uy[0])
+
+        grid_Ux, grid_Uy = torch.meshgrid(grid_Ux, grid_Uy, indexing='xy')
+        grid_Ux = grid_Ux.reshape(-1, 1)
+        grid_Uy = grid_Uy.reshape(-1, 1)
+        
+        # Compute the grid of points in the world-to-camera system
+        points_world = torch.cat([grid_Xx, grid_Xy, grid_Xz], dim=1)
+        grid_fXx, grid_fXy, grid_fXz = f(points_world, P)
+
+        # Compute the PDF of world points (points --> SDF --> PDF)
+        with torch.no_grad():
+            points_world = points_world.to(self.device)
+            sdf_values = self.sdf_network.sdf(points_world)
+            pdf_values = Phi(sdf_values, s)
+            pdf_values = pdf_values.T
+        
+        # Compute the projected SDF in the camera system
+        Ux_min = grid_Ux - distancex
+        Ux_max = grid_Ux + distancex
+        Uy_min = grid_Uy - distancey
+        Uy_max = grid_Uy + distancey
+
+        UXx_intersect = (grid_fXx < Ux_max) & (grid_fXx > Ux_min) & (grid_fXx > 0)
+        UXy_intersect = (grid_fXy < Uy_max) & (grid_fXy > Uy_min) & (grid_fXy > 0)
+
+        mask = UXx_intersect & UXy_intersect
+        
+        probs = torch.sum(pdf_values * mask, axis=1, keepdims=True)
+        
+        torch.cuda.empty_cache()
+        
+        return probs
+    
+    def compute_maps(self):
+        print('Computing guided sampling maps...')
+        maps = []
+        for i in range(len(self.world_mats)):
+            maps.append(self.compute_map(self.world_mats[i], self.scale_mats[i], self.H, self.W))
+            
+            if i % 10 == 0:
+                print(f'Computing map {i}/{len(self.world_mats)}')
+                try:
+                    print(f'Norm diff: {torch.norm(self.maps[i] - maps[i]):.4f}')
+                except:
+                    pass
+        
+        return maps
 
 
 if __name__ == '__main__':
